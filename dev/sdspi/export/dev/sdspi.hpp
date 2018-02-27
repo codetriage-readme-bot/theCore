@@ -2,6 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+//! \file
+//! \brief SDSPI driver module
+
 #ifndef DEV_SDSPI_HPP
 #define DEV_SDSPI_HPP
 
@@ -17,51 +20,57 @@ namespace ecl
 {
 
 // TODO: mention about 8 additional clocks before each command!!!
+
+//! SDSPI driver class
+//! \tparam spi_dev  SPI bus driver
+//! \tparam gpio_cs  Chip-select GPIO
 template<class spi_dev, class gpio_cs>
 class sd_spi
 {
 public:
-    // Lazy initialization, -1 if error. 0 otherwise
+    //! Initializes SDSPI driver and SD card.
     static err init();
-    // -1 if error, 0 otherwise
+
+    //! De-initializes SDSPI driver and SD card.
     static err deinit();
 
-    // < count if error, count otherwise
+    //! Writes data to SD card from current offset.
     static err write(const uint8_t *data, size_t &count);
-    // -1 if error, [0, count] otherwise
+
+    //! Reads data from SD card from current offset.
     static err read(uint8_t *data, size_t &count);
-    // Flushes buffered data
+
+    //! Flushes buffered data.
     static err flush();
 
-    // TODO: extend it with SEEK_CUR and SEEK_END
-    // Seeks to the given position, in bytes
+    //! Seeks to the given position, in bytes
+    //! \todo extend it with SEEK_CUR and SEEK_END
     static err seek(off_t offset /*, SEEK_SET */);
 
-    // Tell current position
-    // -1 if error, valid offset otherwise
+    //! Tells current position
     static err tell(off_t &offt);
 
-    // Returns a length of a block
+    //! Returns a length of a block
     static constexpr size_t get_block_length();
 
-    // Seek flags
+    //! Seek flags
     enum class seekdir
     {
-        beg = 0,
-        cur = 1,
-        end = 2
+        beg = 0, //! Seek relative to the beginning.
+        cur = 1, //! Seek relative to the current position.
+        end = 2  //! Seek relative to the end.
     };
 
 private:
-    // Card types
+    //! Card types
     enum class sd_type
     {
-        hc,   // The card is high capacity
-        sc,   // The card is standart capacity
-        unkn, // Unknown card type
+        hc,   //! The card is high capacity
+        sc,   //! The card is standart capacity
+        unkn, //! Unknown card type
     };
 
-    // R1 response
+    //! R1 response
     struct R1
     {
         R1()      :response{0} {}
@@ -91,7 +100,7 @@ private:
         static constexpr uint8_t reserved_bit  = 0x80;
     };
 
-    // R3 response
+    //! R3 response
     struct R3
     {
         R3()      :r1{}, OCR{0} {}
@@ -100,68 +109,68 @@ private:
         uint32_t   OCR;
     };
 
-    // Are the same
+    //! R7 and R3 layouts are the same
     using R7 = R3;
-    using argument = std::array< uint8_t, 4 >;
+    using argument = std::array<uint8_t, 4>;
 
     // http://elm-chan.org/docs/mmc/mmc_e.html
     // SD SPI command set ------------------------------------------------------
 
-    // GO_IDLE_STATE            - Software reset.
+    //! GO_IDLE_STATE            - Software reset.
     static err CMD0(R1 &r);
 
-    // SEND_OP_COND             - Initiate initialization process.
+    //! SEND_OP_COND             - Initiate initialization process.
     static err CMD1(R1 &r);
 
-    // APP_SEND_OP_COND         - For only SDC. Initiate initialization process.
+    //! APP_SEND_OP_COND         - For only SDC. Initiate initialization process.
     static err ACMD41(R1 &r, bool HCS);
 
-    // SEND_IF_COND             - For only SDC V2. Check voltage range.
+    //! SEND_IF_COND             - For only SDC V2. Check voltage range.
     static err CMD8(R7 &r);
 
-    // SEND_CSD                 - Read CSD register.
+    //! SEND_CSD                 - Read CSD register.
     static err CMD9(R1 &r, uint8_t *buf, size_t size);
 
-    // SEND_CID                 - Read CID register.
+    //! SEND_CID                 - Read CID register.
     static err CMD10(R1 &r);
 
     // STOP_TRANSMISSION        - Stop to read data.
     // int CMD12(R1 &r); R1b is required here
 
-    // SET_BLOCKLEN             - Change R/W block size.
+    //! SET_BLOCKLEN             - Change R/W block size.
     static err CMD16(R1 &r);
 
-    // READ_SINGLE_BLOCK        - Read a block.
+    //! READ_SINGLE_BLOCK        - Read a block.
     static err CMD17(R1 &r, uint32_t address);
 
-    // READ_MULTIPLE_BLOCK      - Read multiple blocks.
+    //! READ_MULTIPLE_BLOCK      - Read multiple blocks.
     static err CMD18(R1 &r, uint32_t address, uint8_t *buf, size_t size);
 
-    // SET_BLOCK_COUNT          - For only MMC. Define number of blocks to transfer
-    //                            with next multi-block read/write command.
+    //! SET_BLOCK_COUNT          - For only MMC. Define number of blocks to transfer
+    //!                            with next multi-block read/write command.
     static err CMD23(R1 &r, uint16_t block_count);
 
-    // SET_WR_BLOCK_ERASE_COUNT - For only SDC. Define number of blocks to pre-erase
-    //                              with next multi-block write command.
+    //! SET_WR_BLOCK_ERASE_COUNT - For only SDC. Define number of blocks to pre-erase
+    //!                              with next multi-block write command.
     static err ACMD23(R1 &r, uint16_t block_count);
 
-    // WRITE_BLOCK              - Write a block.
+    //! WRITE_BLOCK              - Write a block.
     static err CMD24(R1 &r, uint32_t address);
 
-    // WRITE_MULTIPLE_BLOCK     - Write multiple blocks.
+    //! WRITE_MULTIPLE_BLOCK     - Write multiple blocks.
     static err CMD25(R1 &r, uint32_t address, uint8_t *buf, size_t size);
 
-    // APP_CMD                  - Leading command of ACMD<n> command.
+    //! APP_CMD                  - Leading command of ACMD<n> command.
     static err CMD55(R1 &r);
 
-    // READ_OCR                 - Read OCR.
+    //! READ_OCR                 - Read OCR.
     static err CMD58(R3 &r);
 
-    // Sends CMD
+    //! Sends CMD
     template< typename R >
     static err send_CMD(R &resp, uint8_t CMD_idx, const argument &arg, uint8_t crc = 0);
 
-    // Sends >= 47 empty clocks to initialize the device
+    //! Sends >= 47 empty clocks to initialize the device
     static err send_init();
     static err open_card();
     static err software_reset();
@@ -189,16 +198,16 @@ private:
     static err spi_send_dummy(size_t size);
 
 
-    // POD-type, allocated as a static object.
-    // All fields initialized to 0 during static object initialization
+    //! Context POD-type, allocated as a static object.
+    //! \details All fields initialized to 0 during static object initialization
     static struct ctx_type
     {
         bool          inited;     // Init flag
         bool          hc;         // High Capacity flag
         off_t         offt;       // Current offset in units of bytes
 
-        // POD-type, allocated as an subobject of a static object.
-        // All fields initialized to 0 during static object initialization
+        //! Block POD-type, allocated as an subobject of a static object.
+        //! \details  All fields initialized to 0 during static object initialization
         struct block_type
         {
             // Block length is given without respect to the card type.
@@ -207,9 +216,9 @@ private:
             // If card is High Capacity then block length is fixed to 512 by design.
             static constexpr size_t block_len = 512;
 
-            uint8_t buf[block_len];       // The block itself
-            size_t  origin;               // The offset from which block was obtained
-            bool    mint;                 // True if there were no writes in buffer
+            uint8_t buf[block_len];       //!< The block itself
+            size_t  origin;               //!< The offset from which block was obtained
+            bool    mint;                 //!< True if there were no writes in buffer
         } block;    // Buffer containing last read\write block
     } m_ctx;
 };
@@ -267,7 +276,6 @@ err sd_spi<spi_dev, gpio_cs>::write(const uint8_t *data, size_t &count)
 {
     ecl_assert(m_ctx.inited);
 
-    err rc;
     auto fn = [data](size_t data_offt, size_t blk_offt, size_t to_copy) {
         memcpy(m_ctx.block.buf + blk_offt, data + data_offt, to_copy);
         m_ctx.block.mint = false;
@@ -281,7 +289,6 @@ err sd_spi<spi_dev, gpio_cs>::read(uint8_t *data, size_t &count)
 {
     ecl_assert(m_ctx.inited);
 
-    err rc;
     auto fn = [data](size_t data_offt, size_t blk_offt, size_t to_copy) {
         memcpy(data + data_offt, m_ctx.block.buf + blk_offt , to_copy);
     };
@@ -294,7 +301,7 @@ err sd_spi<spi_dev, gpio_cs>::flush()
 {
     ecl_assert(m_ctx.inited);
 
-    int rc;
+    err rc;
 
     spi_dev::lock();
     gpio_cs::reset();
@@ -320,7 +327,8 @@ template<class spi_dev, class gpio_cs>
 err sd_spi<spi_dev, gpio_cs>::tell(off_t &offt)
 {
     ecl_assert(m_ctx.inited);
-    return m_ctx.offt;
+    offt = m_ctx.offt;
+    return err::ok;
 }
 
 template<class spi_dev, class gpio_cs>
