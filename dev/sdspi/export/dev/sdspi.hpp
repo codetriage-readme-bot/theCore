@@ -184,14 +184,14 @@ private:
     static err send_data(const uint8_t *buf, size_t size);
 
     // Transport layer TODO: merge these three
-    static err spi_send(const uint8_t *buf, size_t &size);
-    static err spi_receive(uint8_t *buf, size_t &size);
-    static err spi_send_dummy(size_t &size);
+    static err spi_send(const uint8_t *buf, size_t size);
+    static err spi_receive(uint8_t *buf, size_t size);
+    static err spi_send_dummy(size_t size);
 
 
     // POD-type, allocated as a static object.
     // All fields initialized to 0 during static object initialization
-    static struct
+    static struct ctx_type
     {
         bool          inited;     // Init flag
         bool          hc;         // High Capacity flag
@@ -199,7 +199,7 @@ private:
 
         // POD-type, allocated as an subobject of a static object.
         // All fields initialized to 0 during static object initialization
-        struct
+        struct block_type
         {
             // Block length is given without respect to the card type.
             // If card is Standart Capacity then block length will be set to 512,
@@ -213,6 +213,12 @@ private:
         } block;    // Buffer containing last read\write block
     } m_ctx;
 };
+
+template<class spi_dev, class gpio_cs>
+typename sd_spi<spi_dev, gpio_cs>::ctx_type sd_spi<spi_dev, gpio_cs>::m_ctx = {};
+
+
+//------------------------------------------------------------------------------
 
 template<class spi_dev, class gpio_cs>
 err sd_spi<spi_dev, gpio_cs>::init()
@@ -242,15 +248,16 @@ err sd_spi<spi_dev, gpio_cs>::init()
     spi_dev::unlock();
 
     if (is_ok(rc)) {
-        m_ctx.m_inited = true;
+        m_ctx.inited = true;
     }
 
     return rc;
 }
 
 template<class spi_dev, class gpio_cs>
-err sd_spi<spi_dev, gpio_cs>::close()
+err sd_spi<spi_dev, gpio_cs>::deinit()
 {
+    ecl_assert(m_ctx.inited);
     // TODO
     return err::ok;
 }
@@ -275,7 +282,7 @@ err sd_spi<spi_dev, gpio_cs>::read(uint8_t *data, size_t &count)
     ecl_assert(m_ctx.inited);
 
     err rc;
-    auto fn = [data, this](size_t data_offt, size_t blk_offt, size_t to_copy) {
+    auto fn = [data](size_t data_offt, size_t blk_offt, size_t to_copy) {
         memcpy(data + data_offt, m_ctx.block.buf + blk_offt , to_copy);
     };
 
@@ -310,7 +317,7 @@ err sd_spi<spi_dev, gpio_cs>::seek(off_t offset)
 }
 
 template<class spi_dev, class gpio_cs>
-err sd_spi<spi_dev, gpio_cs>::tell(off_t offt)
+err sd_spi<spi_dev, gpio_cs>::tell(off_t &offt)
 {
     ecl_assert(m_ctx.inited);
     return m_ctx.offt;
@@ -319,13 +326,13 @@ err sd_spi<spi_dev, gpio_cs>::tell(off_t offt)
 template<class spi_dev, class gpio_cs>
 constexpr size_t sd_spi<spi_dev, gpio_cs>::get_block_length()
 {
-    return m_ctx.block::block_len;
+    return ctx_type::block_type::block_len;
 }
 
 // Private methods -------------------------------------------------------------
 
 template<class spi_dev, class gpio_cs>
-err sd_spi<spi_dev, gpio_cs>::spi_send(const uint8_t *buf, size_t &size)
+err sd_spi<spi_dev, gpio_cs>::spi_send(const uint8_t *buf, size_t size)
 {
     spi_dev::set_buffers(buf, nullptr, size);
     // TODO: verify that all data was transferred
@@ -340,7 +347,7 @@ err sd_spi<spi_dev, gpio_cs>::spi_send(const uint8_t *buf, size_t &size)
 }
 
 template<class spi_dev, class gpio_cs>
-err sd_spi<spi_dev, gpio_cs>::spi_receive(uint8_t *buf, size_t &size)
+err sd_spi<spi_dev, gpio_cs>::spi_receive(uint8_t *buf, size_t size)
 {
     spi_dev::set_buffers(nullptr, buf, size);
     // TODO: verify that all data was transferred
@@ -355,7 +362,7 @@ err sd_spi<spi_dev, gpio_cs>::spi_receive(uint8_t *buf, size_t &size)
 }
 
 template<class spi_dev, class gpio_cs>
-err sd_spi<spi_dev, gpio_cs>::spi_send_dummy(size_t &size)
+err sd_spi<spi_dev, gpio_cs>::spi_send_dummy(size_t size)
 {
     spi_dev::set_buffers(size);
     // TODO: verify that all data was transferred
@@ -373,7 +380,8 @@ template<class spi_dev, class gpio_cs>
 err sd_spi<spi_dev, gpio_cs>::send_init()
 {
     // Initialise card with >= 74 clocks on start
-    return spi_send_dummy(80);
+    size_t dummy_bytes = 80; // TODO: bytes or clock pulses?
+    return spi_send_dummy(dummy_bytes);
 }
 
 template<class spi_dev, class gpio_cs>
@@ -410,11 +418,11 @@ template<class spi_dev, class gpio_cs>
 err sd_spi<spi_dev, gpio_cs>::receive_response(R1 &r)
 {
     uint8_t tries = 8;
-    err rc
+    err rc;
 
     do {
         rc = spi_receive(&r.response, 1);
-        if (is_error) {
+        if (is_error(rc)) {
             return rc;
         }
     } while (!r.received() && --tries);
@@ -627,7 +635,7 @@ err sd_spi<spi_dev, gpio_cs>::CMD16(R1 &r)
 {
     // TODO: comments
     constexpr uint8_t  CMD16_idx = 16;
-    constexpr uint32_t block_len = block_buffer::block_len;
+    constexpr uint32_t block_len = ctx_type::block_type::block_len;
     constexpr argument arg = {
         (uint8_t) (block_len >> 24),
         (uint8_t) (block_len >> 16),
@@ -749,7 +757,7 @@ err sd_spi<spi_dev, gpio_cs>::open_card()
         return rc;
     }
 
-    rc = populate_block(m_offt);
+    rc = populate_block(m_ctx.offt);
     if (is_error(rc)) {
         ecl::cout << "Cannot populate initial block" << ecl::endl;
     }
@@ -795,13 +803,13 @@ err sd_spi<spi_dev, gpio_cs>::check_conditions()
 
         if (!(OCR & 0x100)) {
             ecl::cout << "Voltage range not accepted" << ecl::endl;
-            return err::geneic; // TODO: better error code
+            return err::generic; // TODO: better error code
         }
 
         return err::ok;
     }
 
-    return err::geneic; // TODO: better error code
+    return err::generic; // TODO: better error code
 }
 
 template<class spi_dev, class gpio_cs>
@@ -835,7 +843,7 @@ err sd_spi<spi_dev, gpio_cs>::check_OCR(sd_type &type)
 {
     R3 r3;
     CMD58(r3);
-    err rc;
+    err rc = err::ok;
 
     uint32_t OCR = ecl::BE(r3.OCR);
 
@@ -913,94 +921,105 @@ err sd_spi<spi_dev, gpio_cs>::obtain_card_info()
 }
 
 template<class spi_dev, class gpio_cs>
-int sd_spi<spi_dev, gpio_cs>::set_block_length()
+err sd_spi<spi_dev, gpio_cs>::set_block_length()
 {
     R1 r1;
 
-    int SD_ret = CMD16(r1);
-    if (SD_ret < 0)
-        return SD_ret;
+    err rc = CMD16(r1);
+    if (is_error(rc)) {
+        return rc;
+    }
 
     if (r1.response & R1::idle_state) {
         ecl::cout << "Card is in idle state during CMD16" << ecl::endl;
-        SD_ret = sd_err;
+        rc = err::generic; // TODO: better error code
     }
 
-    return SD_ret;
+    return rc;
 }
 
-
 template<class spi_dev, class gpio_cs>
-int sd_spi<spi_dev, gpio_cs>::populate_block(size_t new_block)
+err sd_spi<spi_dev, gpio_cs>::populate_block(size_t new_block)
 {
     R1 r1;
-    off_t address = m_HC ? new_block : new_block * block_buffer::block_len;
-    int SD_ret = flush_block();
+    off_t address = m_ctx.hc ? new_block : new_block * ctx_type::block_type::block_len;
 
-    if ((SD_ret = CMD17(r1, address)) < 0) {
-        return SD_ret;
+    err rc = flush_block();
+    if (is_error(rc)) {
+        return rc;
     }
 
-    if ((SD_ret = receive_data(m_block.block, block_buffer::block_len)) < 0) {
-        return SD_ret;
+    rc = CMD17(r1, address);
+    if (is_error(rc)) {
+        return rc;
     }
 
-    m_block.origin = new_block;
-    return SD_ret;
+    rc = receive_data(m_ctx.block.buf, ctx_type::block_type::block_len);
+    if (is_error(rc)) {
+        return rc;
+    }
+
+    m_ctx.block.origin = new_block;
+    return rc;
 }
 
 template<class spi_dev, class gpio_cs>
-int sd_spi<spi_dev, gpio_cs>::flush_block()
+err sd_spi<spi_dev, gpio_cs>::flush_block()
 {
-    int SD_ret;
+    err rc;
     R1 r1;
 
-    if (m_block.mint) {
-        return sd_ok;
+    if (m_ctx.block.mint) {
+        return err::ok;
     }
 
-    off_t address = m_HC ? m_block.origin : m_block.origin * block_buffer::block_len;
+    off_t address = m_ctx.hc ? m_ctx.block.origin :
+        m_ctx.block.origin * ctx_type::block_type::block_len;
 
-    if ((SD_ret = CMD24(r1, address)) < 0) {
-        return SD_ret;
+    rc = CMD24(r1, address);
+    if (is_error(rc)) {
+        return rc;
     }
 
-    if ((SD_ret = send_data(m_block.block, block_buffer::block_len)) < 0) {
-        return SD_ret;
+    rc = send_data(m_ctx.block.buf, ctx_type::block_type::block_len);
+
+    if (is_error(rc)) {
+        return rc;
     }
 
-    m_block.mint = true;
-    return SD_ret;
+    m_ctx.block.mint = true;
+    return rc;
 }
 
 template<class spi_dev, class gpio_cs>
-int sd_spi<spi_dev, gpio_cs>::traverse_data(
+err sd_spi<spi_dev, gpio_cs>::traverse_data(
         size_t count,
         const std::function< void (size_t, size_t, size_t) > &fn
         )
 {
     size_t left = count;
-    int SD_ret = sd_ok;
+    err rc = err::ok;
 
     // Intended to be optimized in right shift, sinse
     // block length is constant and a power of two
-    size_t blk_num = m_offt / block_buffer::block_len;
-    size_t blk_offt = m_offt - blk_num  * block_buffer::block_len;
+    size_t blk_num = m_ctx.offt / ctx_type::block_type::block_len;
+    size_t blk_offt = m_ctx.offt - blk_num  * ctx_type::block_type::block_len;
     size_t data_offt = 0;
 
     while (left) {
-        if (blk_num  != m_block.origin) {
+        if (blk_num  != m_ctx.block.origin) {
             spi_dev::lock();
             gpio_cs::reset();
-            SD_ret = populate_block(blk_num);
+            rc = populate_block(blk_num);
             gpio_cs::set();
             spi_dev::unlock();
 
-            if (SD_ret < 0)
-                return SD_ret;
+            if (is_error(rc)) {
+                return rc;
+            }
         }
 
-        size_t to_copy = std::min(block_buffer::block_len - blk_offt , left);
+        size_t to_copy = std::min(ctx_type::block_type::block_len - blk_offt , left);
         // Copy data
         fn(data_offt, blk_offt, to_copy);
 
@@ -1009,14 +1028,14 @@ int sd_spi<spi_dev, gpio_cs>::traverse_data(
         left -= to_copy;
 
         // If needed, next iteration will populate buffer again
-        blk_num ++;
+        blk_num++;
         // Next copy will occur within a new block
         blk_offt  = 0;
     }
 
-    m_offt += count;
+    m_ctx.offt += count;
 
-    return SD_ret;
+    return rc;
 }
 
 } // namespace ecl
